@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Doctor-Patient Queue</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            text-align: center;
+            width: 100%;
+            max-width: 1200px;
+            padding: 20px;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        .queue {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin: 20px 0;
+            list-style: none;
+            padding: 0;
+        }
+        .queue-item {
+            background-color: #dff9fb;
+            margin: 5px;
+            padding: 10px 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            font-size: 1.2rem;
+            color: #333;
+        }
+        .doctors {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-around;
+        }
+        .doctor {
+            background-color: #fff;
+            padding: 20px;
+            margin: 10px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            width: 150px;
+            height: 150px;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            transition: background-color 0.5s ease;
+        }
+        .doctor.busy {
+            background-color: #f7d794;
+        }
+        .doctor.available {
+            background-color: #78e08f;
+        }
+        .doctor-left {
+            background-color: #ff6b6b !important;
+        }
+        .patient {
+            position: absolute;
+            top: 10px;
+            color: #333;
+        }
+        .progress {
+            position: absolute;
+            bottom: 10px;
+            width: 90%;
+            height: 10px;
+            background-color: #ccc;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: #ffbe76;
+            transition: width 0.5s;
+        }
+        @media (max-width: 768px) {
+            .doctor {
+                width: 120px;
+                height: 120px;
+                margin: 5px;
+            }
+            .queue-item {
+                padding: 5px 15px;
+                font-size: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Real-Time Doctor-Patient Queue</h1>
+
+        <h2>Doctors</h2>
+        <div class="doctors">
+            <div class="doctor available" id="doctor-a" data-doctor="a">
+                <strong>Doctor A</strong>
+                <span class="patient"></span>
+                <div class="progress">
+                    <div class="progress-bar"></div>
+                </div>
+            </div>
+            <div class="doctor available" id="doctor-b" data-doctor="b">
+                <strong>Doctor B</strong>
+                <span class="patient"></span>
+                <div class="progress">
+                    <div class="progress-bar"></div>
+                </div>
+            </div>
+            <div class="doctor available" id="doctor-c" data-doctor="c">
+                <strong>Doctor C</strong>
+                <span class="patient"></span>
+                <div class="progress">
+                    <div class="progress-bar"></div>
+                </div>
+            </div>
+            <div class="doctor available" id="doctor-d" data-doctor="d">
+                <strong>Doctor D</strong>
+                <span class="patient"></span>
+                <div class="progress">
+                    <div class="progress-bar"></div>
+                </div>
+            </div>
+        </div>
+
+        <h2>Queue</h2>
+        <ul class="queue" id="queue"></ul>
+
+        <div id="doctor-left-notice" style="display:none;" class="doctor-left">
+            <h2>Doctor C has left. Reassigning patients...</h2>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let doctorCHandledPatients = 0;
+
+        socket.on('update', data => {
+            updateDoctors(data.currentAssignments, data.doctors);
+            updateQueue(data.patientsQueue);
+        });
+
+        socket.on('doctorLeft', (data) => {
+            document.getElementById('doctor-left-notice').style.display = 'block';
+            const docElem = document.querySelector(`#doctor-${data.doctorId}`);
+            docElem.classList.add('doctor-left'); // Mark the doctor in red
+        });
+
+        function updateDoctors(assignments, doctors) {
+            doctors.forEach(doc => {
+                const docElem = document.querySelector(`#doctor-${doc.id}`);
+                if (!docElem) return;
+
+                const patientElem = docElem.querySelector('.patient');
+                const progressBar = docElem.querySelector('.progress-bar');
+
+                const assignment = assignments.find(a => a.doctor === doc.name);
+
+                if (assignment) {
+                    docElem.classList.add('busy');
+                    docElem.classList.remove('available');
+                    patientElem.textContent = assignment.patient;
+                    progressBar.style.width = '100%';
+                    animateProgress(progressBar);
+                    
+                    // Track patients handled by Doctor C
+                    if (doc.id === 'doctor-c') {
+                        doctorCHandledPatients++;
+                        if (doctorCHandledPatients >= 6) {
+                            doctorLeaves(docElem);
+                        }
+                    }
+                } else {
+                    docElem.classList.remove('busy');
+                    docElem.classList.add('available');
+                    patientElem.textContent = 'Available';
+                    progressBar.style.width = '0%';
+                }
+            });
+        }
+
+        function doctorLeaves(doctorElem) {
+            doctorElem.classList.add('doctor-left');
+            doctorElem.classList.remove('available', 'busy');
+            doctorElem.querySelector('.patient').textContent = 'Left';
+            // Trigger 'doctorLeft' event for UI updates
+            socket.emit('doctorLeft', { doctorId: 'c' });
+        }
+
+        function animateProgress(progressBar) {
+            setTimeout(() => {
+                progressBar.style.width = '0%';
+            }, Math.random() * 2000 + 1000);
+        }
+
+        function updateQueue(patientsQueue) {
+            const queueElem = document.getElementById('queue');
+            queueElem.innerHTML = ''; // Clear the queue
+
+            patientsQueue.forEach((patient, index) => {
+                const patientElem = document.createElement('li');
+                patientElem.classList.add('queue-item');
+                patientElem.textContent = index + 1 + ": " + patient;  // Numbered queue
+                queueElem.appendChild(patientElem);
+            });
+        }
+    </script>
+</body>
+</html>
